@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+server/uploads/
+server/invai.db
+server/invai.db-shm
+server/invai.db-wal
+client/dist/
+*.tsbuildinfo
