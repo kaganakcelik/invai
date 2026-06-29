@@ -1,6 +1,6 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import path from 'path';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { localAdapter as adapter } from '../storage/localAdapter';
 
 const EXT_TO_MIME: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -9,11 +9,10 @@ const EXT_TO_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.webp': 'image/webp',
 };
-import { localAdapter as adapter } from '../storage/localAdapter';
 
 const router = Router();
 
-router.get('/:filename', requireAuth, (req: AuthRequest, res: Response): void => {
+router.get('/:filename', (req: Request, res: Response): void => {
   const filename = req.params.filename;
 
   if (filename.includes('..') || filename.includes('/')) {

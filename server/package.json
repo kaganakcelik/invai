@@ -6,7 +6,8 @@
     "dev": "NODE_OPTIONS='--experimental-sqlite' tsx watch src/index.ts",
     "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
     "start": "NODE_OPTIONS='--experimental-sqlite' node dist/index.js",
-    "test": "NODE_OPTIONS='--experimental-sqlite' vitest run"
+    "test": "NODE_OPTIONS='--experimental-sqlite' vitest run",
+    "seed": "NODE_OPTIONS='--experimental-sqlite' tsx src/db/seed.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
