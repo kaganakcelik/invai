@@ -10,3 +10,7 @@ export async function createVendor(name: string): Promise<Vendor> {
   const res = await api.post<Vendor>('/vendors', { name });
   return res.data;
 }
+
+export async function deleteVendor(id: string): Promise<void> {
+  await api.delete(`/vendors/${id}`);
+}

@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileDropzone } from '../components/FileDropzone';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { getLocations, createLocation } from '../api/locations';
-import { getVendors, createVendor } from '../api/vendors';
+import { CustomSelect } from '../components/CustomSelect';
+import { getLocations, createLocation, deleteLocation } from '../api/locations';
+import { getVendors, createVendor, deleteVendor } from '../api/vendors';
 import { uploadInvoice, getInvoice } from '../api/invoices';
 
 export function UploadPage() {
@@ -57,6 +58,22 @@ export function UploadPage() {
     },
   });
 
+  const removeLocation = useMutation({
+    mutationFn: (id: string) => deleteLocation(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['locations'] });
+      if (locationId === id) setLocationId('');
+    },
+  });
+
+  const removeVendor = useMutation({
+    mutationFn: (id: string) => deleteVendor(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['vendors'] });
+      if (vendorId === id) setVendorId('');
+    },
+  });
+
   const uploadMutation = useMutation({
     mutationFn: () => uploadInvoice(files[0], locationId, vendorId),
     onSuccess: (data) => {
@@ -101,12 +118,14 @@ export function UploadPage() {
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label>Location</label>
-              <select value={locationId} onChange={(e) => setLocationId(e.target.value)} required>
-                <option value="">Select a location…</option>
-                {(locations.data ?? []).map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-              </select>
+              <CustomSelect
+                value={locationId}
+                onChange={setLocationId}
+                options={(locations.data ?? []).map((l) => ({ value: l.id, label: l.name }))}
+                placeholder="Select a location…"
+                required
+                onDelete={(id) => removeLocation.mutate(id)}
+              />
               <div className="flex gap-8 mt-16" style={{ marginTop: 8 }}>
                 <input
                   type="text"
@@ -128,12 +147,14 @@ export function UploadPage() {
 
             <div className="form-group">
               <label>Vendor / Distributor</label>
-              <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} required>
-                <option value="">Select a vendor…</option>
-                {(vendors.data ?? []).map((v) => (
-                  <option key={v.id} value={v.id}>{v.name}</option>
-                ))}
-              </select>
+              <CustomSelect
+                value={vendorId}
+                onChange={setVendorId}
+                options={(vendors.data ?? []).map((v) => ({ value: v.id, label: v.name }))}
+                placeholder="Select a vendor…"
+                required
+                onDelete={(id) => removeVendor.mutate(id)}
+              />
               <div className="flex gap-8" style={{ marginTop: 8 }}>
                 <input
                   type="text"
@@ -158,6 +179,7 @@ export function UploadPage() {
               <FileDropzone files={files} onFiles={setFiles} />
             </div>
 
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
             <button
               type="submit"
               className="btn btn-primary"
@@ -165,6 +187,7 @@ export function UploadPage() {
             >
               {uploadMutation.isPending ? 'Uploading…' : 'Upload & Analyze'}
             </button>
+            </div>
           </form>
         </div>
       ) : (

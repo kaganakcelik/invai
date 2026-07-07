@@ -7,7 +7,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   async function handleLogout() {
     await signOut();
-    navigate('/login');
+    navigate('/');
   }
 
   return (
@@ -17,7 +17,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           inv<span>ai</span>
         </div>
         <nav className="sidebar-nav">
-          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+          <NavLink to="/dashboard" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             Dashboard
           </NavLink>
           <NavLink to="/upload" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>

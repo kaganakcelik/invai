@@ -28,4 +28,14 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response): Promise<v
   res.status(201).json(data);
 });
 
+router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const { error } = await supabase
+    .from('locations')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', req.user!.id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(204).send();
+});
+
 export default router;

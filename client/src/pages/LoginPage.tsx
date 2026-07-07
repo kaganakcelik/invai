@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 type Mode = 'signin' | 'signup';
@@ -22,7 +22,7 @@ export function LoginPage() {
     try {
       if (mode === 'signin') {
         await signIn(email, password);
-        navigate('/');
+        navigate('/dashboard');
       } else {
         await signUp(email, password);
         setMessage('Account created! Check your email to confirm, then sign in.');
@@ -87,6 +87,11 @@ export function LoginPage() {
             {loading ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>
         </form>
+        <div style={{ textAlign: 'center', marginTop: 20 }}>
+          <Link to="/" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>
+            ← Back to home
+          </Link>
+        </div>
       </div>
     </div>
   );
