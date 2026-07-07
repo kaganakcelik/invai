@@ -1,67 +1,82 @@
 import { Router, Response } from 'express';
-import db from '../db/client';
+import { supabase } from '../db/supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { processInvoice } from '../services/extraction';
 import { Invoice } from '../types';
+import fs from 'fs';
+import path from 'path';
+import { config } from '../config';
 
 const router = Router();
 
-router.get('/', requireAuth, (req: AuthRequest, res: Response): void => {
+router.get('/', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const { location_id, vendor_id, status } = req.query as Record<string, string>;
 
-  let sql = `SELECT i.*, l.name as location_name, v.name as vendor_name
-             FROM invoices i
-             LEFT JOIN locations l ON i.location_id = l.id
-             LEFT JOIN vendors v ON i.vendor_id = v.id
-             WHERE 1=1`;
-  const params: string[] = [];
+  let query = supabase
+    .from('invoices')
+    .select('*, locations(name), vendors(name)')
+    .eq('user_id', req.user!.id)
+    .order('uploaded_at', { ascending: false });
 
-  if (location_id) { sql += ' AND i.location_id = ?'; params.push(location_id); }
-  if (vendor_id)   { sql += ' AND i.vendor_id = ?';   params.push(vendor_id); }
-  if (status)      { sql += ' AND i.status = ?';       params.push(status); }
+  if (location_id) query = query.eq('location_id', location_id);
+  if (vendor_id)   query = query.eq('vendor_id', vendor_id);
+  if (status)      query = query.eq('status', status);
 
-  sql += ' ORDER BY i.uploaded_at DESC';
+  const { data, error } = await query;
+  if (error) { res.status(500).json({ error: error.message }); return; }
 
-  res.json(db.prepare(sql).all(...params));
+  const result = (data ?? []).map((i) => ({
+    ...i,
+    location_name: (i.locations as { name: string } | null)?.name,
+    vendor_name: (i.vendors as { name: string } | null)?.name,
+    locations: undefined,
+    vendors: undefined,
+  }));
+
+  res.json(result);
 });
 
-router.get('/:id', requireAuth, (req: AuthRequest, res: Response): void => {
-  const invoice = db
-    .prepare(
-      `SELECT i.*, l.name as location_name, v.name as vendor_name
-       FROM invoices i
-       LEFT JOIN locations l ON i.location_id = l.id
-       LEFT JOIN vendors v ON i.vendor_id = v.id
-       WHERE i.id = ?`
-    )
-    .get(req.params.id);
+router.get('/:id', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const { data: invoice, error } = await supabase
+    .from('invoices')
+    .select('*, locations(name), vendors(name)')
+    .eq('id', req.params.id)
+    .eq('user_id', req.user!.id)
+    .single();
 
-  if (!invoice) {
-    res.status(404).json({ error: 'Invoice not found' });
-    return;
-  }
+  if (error || !invoice) { res.status(404).json({ error: 'Invoice not found' }); return; }
 
-  const lineItems = db
-    .prepare('SELECT * FROM line_items WHERE invoice_id = ? ORDER BY created_at')
-    .all(req.params.id);
+  const [{ data: lineItems }, { data: flags }] = await Promise.all([
+    supabase.from('line_items').select('*').eq('invoice_id', req.params.id).order('created_at'),
+    supabase
+      .from('price_flags')
+      .select('*, line_items!inner(invoice_id)')
+      .eq('line_items.invoice_id', req.params.id),
+  ]);
 
-  const flags = db
-    .prepare(
-      `SELECT pf.* FROM price_flags pf
-       JOIN line_items li ON pf.line_item_id = li.id
-       WHERE li.invoice_id = ?`
-    )
-    .all(req.params.id);
-
-  res.json({ invoice, line_items: lineItems, price_flags: flags });
+  res.json({
+    invoice: {
+      ...invoice,
+      location_name: (invoice.locations as { name: string } | null)?.name,
+      vendor_name: (invoice.vendors as { name: string } | null)?.name,
+      locations: undefined,
+      vendors: undefined,
+    },
+    line_items: lineItems ?? [],
+    price_flags: (flags ?? []).map((f) => ({ ...f, line_items: undefined })),
+  });
 });
 
 router.post('/:id/retry', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  const invoice = db
-    .prepare("SELECT * FROM invoices WHERE id = ? AND status = 'failed'")
-    .get(req.params.id) as Invoice | undefined;
+  const { data: invoice, error } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('user_id', req.user!.id)
+    .eq('status', 'failed')
+    .single();
 
-  if (!invoice) {
+  if (error || !invoice) {
     res.status(404).json({ error: 'Invoice not found or not in failed state' });
     return;
   }
@@ -71,60 +86,40 @@ router.post('/:id/retry', requireAuth, async (req: AuthRequest, res: Response): 
     return;
   }
 
-  db.prepare("UPDATE invoices SET status = 'pending' WHERE id = ?").run(invoice.id);
-
-  // Re-process from the stored file
-  const fs = await import('fs');
-  const path = await import('path');
-  const { config } = await import('../config');
   const filePath = path.join(config.UPLOAD_DIR, invoice.file_path);
-
   if (!fs.existsSync(filePath)) {
-    db.prepare("UPDATE invoices SET status = 'failed' WHERE id = ?").run(invoice.id);
+    await supabase.from('invoices').update({ status: 'failed' }).eq('id', invoice.id);
     res.status(400).json({ error: 'Stored file not found on disk' });
     return;
   }
 
-  const buffer = fs.readFileSync(filePath);
-  const ext = path.extname(invoice.file_path).toLowerCase();
-  const mimeMap: Record<string, string> = {
-    '.pdf': 'application/pdf',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
-  };
-  const mimetype = mimeMap[ext] ?? 'application/pdf';
+  // Clear old line items (price_flags cascade-delete via FK)
+  const { data: itemIds } = await supabase
+    .from('line_items')
+    .select('id')
+    .eq('invoice_id', invoice.id);
 
-  const mockFile = {
-    buffer,
-    mimetype,
-    originalname: invoice.file_path,
-  } as Express.Multer.File;
-
-  // Clear old line items and flags before retrying
-  db.exec('BEGIN');
-  try {
-    const itemIds = (
-      db.prepare('SELECT id FROM line_items WHERE invoice_id = ?').all(invoice.id) as { id: string }[]
-    ).map((r) => r.id);
-
-    if (itemIds.length > 0) {
-      db.prepare(
-        `DELETE FROM price_flags WHERE line_item_id IN (${itemIds.map(() => '?').join(',')})`
-      ).run(...itemIds);
-      db.prepare('DELETE FROM line_items WHERE invoice_id = ?').run(invoice.id);
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    res.status(500).json({ error: 'Failed to clear old data for retry' });
-    return;
+  if (itemIds && itemIds.length > 0) {
+    await supabase.from('price_flags').delete().in('line_item_id', itemIds.map((i) => i.id));
+    await supabase.from('line_items').delete().eq('invoice_id', invoice.id);
   }
+
+  await supabase.from('invoices').update({ status: 'pending' }).eq('id', invoice.id);
 
   res.json({ invoice_id: invoice.id, status: 'pending' });
 
-  processInvoice(invoice, mockFile).catch((err) => {
+  const buffer = fs.readFileSync(filePath);
+  const ext = path.extname(invoice.file_path).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png', '.webp': 'image/webp',
+  };
+
+  processInvoice(invoice as Invoice, {
+    buffer,
+    mimetype: mimeMap[ext] ?? 'application/pdf',
+    originalname: invoice.file_path,
+  } as Express.Multer.File).catch((err) => {
     console.error(`Retry failed for invoice ${invoice.id}:`, err);
   });
 });

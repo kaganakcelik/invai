@@ -1,23 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { config } from '../config';
+import { supabase } from '../db/supabase';
 
 export interface AuthRequest extends Request {
-  user?: { email: string };
+  user?: { id: string; email: string };
 }
 
-export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
   const token = header.slice(7);
-  try {
-    const payload = jwt.verify(token, config.JWT_SECRET) as { email: string };
-    req.user = { email: payload.email };
-    next();
-  } catch {
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) {
     res.status(401).json({ error: 'Invalid or expired token' });
+    return;
   }
+  req.user = { id: user.id, email: user.email ?? '' };
+  next();
 }

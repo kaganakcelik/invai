@@ -1,34 +1,11 @@
-import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
-import { config } from '../config';
+import { Router, Response } from 'express';
+import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-router.post('/login', (req: Request, res: Response): void => {
-  const { email, password } = req.body as { email?: string; password?: string };
-
-  if (!email || !password) {
-    res.status(400).json({ error: 'Email and password required' });
-    return;
-  }
-
-  const emailMatch = crypto.timingSafeEqual(
-    Buffer.from(email),
-    Buffer.from(config.ADMIN_EMAIL)
-  );
-  const passwordMatch = crypto.timingSafeEqual(
-    Buffer.from(password),
-    Buffer.from(config.ADMIN_PASSWORD)
-  );
-
-  if (!emailMatch || !passwordMatch) {
-    res.status(401).json({ error: 'Invalid credentials' });
-    return;
-  }
-
-  const token = jwt.sign({ email }, config.JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token });
+// Auth is handled client-side by Supabase. This endpoint just returns the current user info.
+router.get('/me', requireAuth, (req: AuthRequest, res: Response): void => {
+  res.json({ id: req.user!.id, email: req.user!.email });
 });
 
 export default router;

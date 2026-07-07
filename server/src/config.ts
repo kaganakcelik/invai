@@ -10,10 +10,8 @@ function require_env(key: string): string {
 export const config = Object.freeze({
   PORT: parseInt(process.env.PORT ?? '3001', 10),
   GEMINI_API_KEY: require_env('GEMINI_API_KEY'),
-  JWT_SECRET: require_env('JWT_SECRET'),
-  ADMIN_EMAIL: require_env('ADMIN_EMAIL'),
-  ADMIN_PASSWORD: require_env('ADMIN_PASSWORD'),
-  DB_PATH: path.resolve(process.env.DB_PATH ?? './invai.db'),
+  SUPABASE_URL: require_env('SUPABASE_URL'),
+  SUPABASE_SERVICE_ROLE_KEY: require_env('SUPABASE_SERVICE_ROLE_KEY'),
   UPLOAD_DIR: path.resolve(process.env.UPLOAD_DIR ?? './uploads'),
   FLAG_THRESHOLD: parseFloat(process.env.FLAG_THRESHOLD ?? '0.05'),
 });

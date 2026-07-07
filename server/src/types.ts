@@ -1,11 +1,13 @@
 export interface Location {
   id: string;
+  user_id: string;
   name: string;
   created_at: string;
 }
 
 export interface Vendor {
   id: string;
+  user_id: string;
   name: string;
   created_at: string;
 }
@@ -14,6 +16,7 @@ export type InvoiceStatus = 'pending' | 'parsed' | 'failed';
 
 export interface Invoice {
   id: string;
+  user_id: string;
   location_id: string;
   vendor_id: string;
   invoice_date: string | null;

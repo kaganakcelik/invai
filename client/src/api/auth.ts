@@ -1,6 +1,3 @@
-import api from './client';
-
-export async function login(email: string, password: string): Promise<string> {
-  const res = await api.post<{ token: string }>('/auth/login', { email, password });
-  return res.data.token;
-}
+// Auth is handled directly by the Supabase client in useAuth.tsx
+// This file is kept as a placeholder to avoid import errors.
+export {};

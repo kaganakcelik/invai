@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import { config } from './config';
-import { migrate } from './db/migrate';
 
 import authRouter from './routes/auth';
 import locationsRouter from './routes/locations';
@@ -10,8 +9,6 @@ import invoicesRouter from './routes/invoices';
 import uploadRouter from './routes/upload';
 import flagsRouter from './routes/flags';
 import filesRouter from './routes/files';
-
-migrate();
 
 const app = express();
 

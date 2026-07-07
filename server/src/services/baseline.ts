@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { PriceFlag } from '../types';
@@ -8,114 +8,99 @@ interface BaselineResult {
   count: number;
 }
 
-interface LineItemRow {
-  id: string;
-  normalized_item_name: string;
-  unit_price: number | null;
-  quantity: number | null;
-}
-
-export function computeBaseline(
-  db: DatabaseSync,
+async function computeBaseline(
+  supabase: SupabaseClient,
+  userId: string,
   normalizedItemName: string,
   vendorId: string,
   excludeInvoiceId: string,
   asOfDate: string
-): BaselineResult | null {
-  const row = db
-    .prepare(
-      `SELECT AVG(li.unit_price) as avg_price, COUNT(*) as cnt
-       FROM line_items li
-       JOIN invoices i ON li.invoice_id = i.id
-       WHERE li.normalized_item_name = ?
-         AND i.vendor_id = ?
-         AND i.id != ?
-         AND i.uploaded_at >= datetime(?, '-30 days')
-         AND i.status = 'parsed'
-         AND li.unit_price IS NOT NULL
-         AND li.unit_price > 0`
-    )
-    .get(normalizedItemName, vendorId, excludeInvoiceId, asOfDate) as {
-    avg_price: number | null;
-    cnt: number;
-  } | undefined;
+): Promise<BaselineResult | null> {
+  const thirtyDaysAgo = new Date(new Date(asOfDate).getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  if (!row || row.cnt < 2 || row.avg_price === null) return null;
-  return { baseline: row.avg_price, count: row.cnt };
+  const { data: invoices } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('vendor_id', vendorId)
+    .eq('status', 'parsed')
+    .neq('id', excludeInvoiceId)
+    .gte('uploaded_at', thirtyDaysAgo);
+
+  if (!invoices || invoices.length === 0) return null;
+
+  const invoiceIds = invoices.map((i) => i.id);
+
+  const { data: items } = await supabase
+    .from('line_items')
+    .select('unit_price')
+    .in('invoice_id', invoiceIds)
+    .eq('normalized_item_name', normalizedItemName)
+    .gt('unit_price', 0);
+
+  if (!items || items.length < 2) return null;
+
+  const avg = items.reduce((sum, i) => sum + (i.unit_price as number), 0) / items.length;
+  return { baseline: avg, count: items.length };
 }
 
-export function flagNewItems(
-  db: DatabaseSync,
+export async function flagNewItems(
+  supabase: SupabaseClient,
+  userId: string,
   invoiceId: string,
   vendorId: string
-): PriceFlag[] {
-  const invoice = db
-    .prepare('SELECT uploaded_at FROM invoices WHERE id = ?')
-    .get(invoiceId) as { uploaded_at: string } | undefined;
+): Promise<PriceFlag[]> {
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('uploaded_at')
+    .eq('id', invoiceId)
+    .single();
 
   if (!invoice) return [];
 
-  const items = db
-    .prepare(
-      'SELECT id, normalized_item_name, unit_price, quantity FROM line_items WHERE invoice_id = ?'
-    )
-    .all(invoiceId) as unknown as LineItemRow[];
+  const { data: items } = await supabase
+    .from('line_items')
+    .select('id, normalized_item_name, unit_price, quantity')
+    .eq('invoice_id', invoiceId);
 
-  const insertFlag = db.prepare(
-    `INSERT INTO price_flags (id, line_item_id, baseline_price, current_price, pct_change, estimated_dollar_impact)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  );
+  if (!items) return [];
 
-  const created: PriceFlag[] = [];
+  const flagsToInsert: PriceFlag[] = [];
 
-  db.exec('BEGIN');
-  try {
-    for (const item of items) {
-      if (item.unit_price === null || item.unit_price <= 0) continue;
+  for (const item of items) {
+    if (!item.unit_price || item.unit_price <= 0) continue;
 
-      const result = computeBaseline(
-        db,
-        item.normalized_item_name,
-        vendorId,
-        invoiceId,
-        invoice.uploaded_at
-      );
+    const result = await computeBaseline(
+      supabase,
+      userId,
+      item.normalized_item_name,
+      vendorId,
+      invoiceId,
+      invoice.uploaded_at
+    );
 
-      if (!result) continue;
+    if (!result) continue;
 
-      const pctChange = (item.unit_price - result.baseline) / result.baseline;
+    const pctChange = (item.unit_price - result.baseline) / result.baseline;
+    if (pctChange <= config.FLAG_THRESHOLD) continue;
 
-      if (pctChange <= config.FLAG_THRESHOLD) continue;
+    const dollarImpact = (item.unit_price - result.baseline) * (item.quantity ?? 0);
+    if (dollarImpact <= 0) continue;
 
-      const dollarImpact = (item.unit_price - result.baseline) * (item.quantity ?? 0);
-      if (dollarImpact <= 0) continue;
-
-      const flag: PriceFlag = {
-        id: uuidv4(),
-        line_item_id: item.id,
-        baseline_price: result.baseline,
-        current_price: item.unit_price,
-        pct_change: pctChange,
-        estimated_dollar_impact: dollarImpact,
-        created_at: new Date().toISOString(),
-      };
-
-      insertFlag.run(
-        flag.id,
-        flag.line_item_id,
-        flag.baseline_price,
-        flag.current_price,
-        flag.pct_change,
-        flag.estimated_dollar_impact
-      );
-
-      created.push(flag);
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+    flagsToInsert.push({
+      id: uuidv4(),
+      line_item_id: item.id,
+      baseline_price: result.baseline,
+      current_price: item.unit_price,
+      pct_change: pctChange,
+      estimated_dollar_impact: dollarImpact,
+      created_at: new Date().toISOString(),
+    });
   }
 
-  return created;
+  if (flagsToInsert.length > 0) {
+    await supabase.from('price_flags').insert(flagsToInsert);
+  }
+
+  return flagsToInsert;
 }

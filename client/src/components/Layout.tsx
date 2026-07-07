@@ -2,11 +2,11 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const { logout } = useAuth();
+  const { signOut } = useAuth();
   const navigate = useNavigate();
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await signOut();
     navigate('/login');
   }
 

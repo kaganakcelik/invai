@@ -58,7 +58,7 @@ export class ExtractionError extends Error {
 
 async function callGemini(buffer: Buffer, mimeType: string): Promise<GeminiExtractionResult> {
   const model = genAI.getGenerativeModel({
-    model: 'gemini-3.5-flash',
+    model: 'gemini-2.5-flash',
     generationConfig: { responseMimeType: 'application/json' },
   });
 

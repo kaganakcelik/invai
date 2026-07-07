@@ -1,4 +1,4 @@
-import db from '../db/client';
+import { supabase } from '../db/supabase';
 import { localAdapter as adapter } from '../storage/localAdapter';
 import { extractInvoice, ExtractionError } from './gemini';
 import { flagNewItems } from './baseline';
@@ -8,49 +8,39 @@ import { Invoice } from '../types';
 export async function processInvoice(invoice: Invoice, file: Express.Multer.File): Promise<void> {
   try {
     const filePath = await adapter.save(file);
-    db.prepare('UPDATE invoices SET file_path = ? WHERE id = ?').run(filePath, invoice.id);
+    await supabase.from('invoices').update({ file_path: filePath }).eq('id', invoice.id);
 
     const extraction = await extractInvoice(file.buffer, file.mimetype);
 
-    db.prepare('UPDATE invoices SET raw_extraction_json = ?, invoice_date = ? WHERE id = ?').run(
-      JSON.stringify(extraction),
-      extraction.invoice_date ?? null,
-      invoice.id
-    );
+    await supabase.from('invoices').update({
+      raw_extraction_json: JSON.stringify(extraction),
+      invoice_date: extraction.invoice_date ?? null,
+    }).eq('id', invoice.id);
 
-    const insertItem = db.prepare(
-      `INSERT INTO line_items (id, invoice_id, raw_description, normalized_item_name, unit, quantity, unit_price, line_total)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+    const lineItems = extraction.line_items.map((item) => ({
+      id: uuidv4(),
+      invoice_id: invoice.id,
+      raw_description: item.raw_description ?? null,
+      normalized_item_name: item.normalized_item_name.toLowerCase().trim(),
+      unit: item.unit ?? null,
+      quantity: item.quantity ?? null,
+      unit_price: item.unit_price ?? null,
+      line_total: item.line_total ?? null,
+    }));
 
-    db.exec('BEGIN');
-    try {
-      for (const item of extraction.line_items) {
-        insertItem.run(
-          uuidv4(),
-          invoice.id,
-          item.raw_description ?? null,
-          item.normalized_item_name.toLowerCase().trim(),
-          item.unit ?? null,
-          item.quantity ?? null,
-          item.unit_price ?? null,
-          item.line_total ?? null
-        );
-      }
-      db.exec('COMMIT');
-    } catch (e) {
-      db.exec('ROLLBACK');
-      throw e;
+    if (lineItems.length > 0) {
+      const { error } = await supabase.from('line_items').insert(lineItems);
+      if (error) throw new Error(`Failed to insert line items: ${error.message}`);
     }
 
-    flagNewItems(db, invoice.id, invoice.vendor_id);
+    await flagNewItems(supabase, invoice.user_id, invoice.id, invoice.vendor_id);
 
-    db.prepare("UPDATE invoices SET status = 'parsed' WHERE id = ?").run(invoice.id);
+    await supabase.from('invoices').update({ status: 'parsed' }).eq('id', invoice.id);
     console.log(`Invoice ${invoice.id} parsed: ${extraction.line_items.length} items`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Invoice ${invoice.id} failed: ${message}`);
-    db.prepare("UPDATE invoices SET status = 'failed' WHERE id = ?").run(invoice.id);
+    await supabase.from('invoices').update({ status: 'failed' }).eq('id', invoice.id);
     throw err instanceof ExtractionError ? err : new Error(message);
   }
 }
