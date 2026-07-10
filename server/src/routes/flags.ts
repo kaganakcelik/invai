@@ -93,8 +93,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response): Promise<vo
   const result = flags.map((f) => {
     const li = lineItemMap.get(f.line_item_id);
     const inv = li ? invoiceMap.get(li.invoice_id) : undefined;
-    const vendor = inv ? (inv.vendors as { id: string; name: string } | null) : null;
-    const location = inv ? (inv.locations as { id: string; name: string } | null) : null;
+    const vendor = inv ? (inv.vendors as unknown as { id: string; name: string } | null) : null;
+    const location = inv ? (inv.locations as unknown as { id: string; name: string } | null) : null;
     return {
       ...f,
       normalized_item_name: li?.normalized_item_name,
